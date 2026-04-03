@@ -45,9 +45,16 @@ RUN if [ ! -f tasks.json ]; then echo "[]" > tasks.json; fi
 
 # 设置环境变量
 ENV NODE_ENV=production
+ENV PORT=3000
+ENV APP_USERNAME=admin
+ENV APP_PASSWORD=admin
+ENV DATA_DIR=/data
 
-# 暴露端口
+# 创建数据目录
+RUN mkdir -p /data
+
+# 暴露端口 (虽然 EXPOSE 是文档性质，但保持一致)
 EXPOSE 3000
 
-# 启动命令 (Node 22 支持原生运行 .ts 文件)
+# 启动命令
 CMD ["node", "--experimental-strip-types", "server.ts"]

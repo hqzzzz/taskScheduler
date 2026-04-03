@@ -5,12 +5,83 @@ import { exec } from 'child_process';
 import cron from 'node-cron';
 import { v4 as uuidv4 } from 'uuid';
 
+import dotenv from 'dotenv';
+dotenv.config();
+
 const app = express();
+app.set('trust proxy', true);
 const PORT = Number(process.env.PORT) || 3000;
-const TASKS_FILE = path.join(process.cwd(), 'tasks.json');
-const LOGS_FILE = path.join(process.cwd(), 'logs.json');
+const APP_USERNAME = process.env.APP_USERNAME || 'admin';
+const APP_PASSWORD = process.env.APP_PASSWORD || 'password123';
+
+// IP Blocking Logic
+const failedAttempts = new Map<string, number>();
+const blockedIps = new Set<string>();
+
+const ipBlockMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  if (blockedIps.has(ip)) {
+    return res.status(403).json({ error: 'Your IP has been blocked due to too many failed login attempts. Please restart the service to unblock.' });
+  }
+  next();
+};
+
+// Ensure /data directory exists for persistent storage
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
+const LOGS_FILE = path.join(DATA_DIR, 'logs.json');
 
 app.use(express.json());
+app.use(ipBlockMiddleware);
+
+// Simple Auth Middleware
+const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (!APP_USERNAME || !APP_PASSWORD) {
+    return next();
+  }
+  
+  const authHeader = req.headers.authorization;
+  if (authHeader === `Basic ${Buffer.from(`${APP_USERNAME}:${APP_PASSWORD}`).toString('base64')}`) {
+    return next();
+  }
+  
+  res.status(401).json({ error: 'Unauthorized' });
+};
+
+// Login endpoint to check credentials
+app.post('/api/login', (req, res) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const { username, password } = req.body;
+
+  if (!APP_USERNAME || !APP_PASSWORD) {
+    return res.json({ success: true, noAuth: true });
+  }
+  
+  if (username === APP_USERNAME && password === APP_PASSWORD) {
+    failedAttempts.delete(ip); // Reset on success
+    const token = Buffer.from(`${username}:${password}`).toString('base64');
+    res.json({ success: true, token });
+  } else {
+    const attempts = (failedAttempts.get(ip) || 0) + 1;
+    failedAttempts.set(ip, attempts);
+    
+    if (attempts >= 5) {
+      blockedIps.add(ip);
+      return res.status(403).json({ success: false, error: 'Too many failed attempts. Your IP has been blocked.' });
+    }
+    
+    res.status(401).json({ success: false, error: `Invalid credentials. ${5 - attempts} attempts remaining.` });
+  }
+});
+
+// Protect all other API routes
+app.use('/api/tasks', authMiddleware);
+app.use('/api/logs', authMiddleware);
+app.use('/api/fs', authMiddleware);
 
 // Helper to read/write JSON files
 const readJson = (file: string) => {
@@ -204,6 +275,9 @@ app.get('/api/fs/ls', (req, res) => {
 
   try {
     if (!fs.existsSync(dir)) return res.json([]);
+    const stats = fs.statSync(dir);
+    if (!stats.isDirectory()) return res.json([]);
+
     const files = fs.readdirSync(dir, { withFileTypes: true });
     const suggestions = files
       .filter(f => f.name.startsWith(base))
@@ -212,10 +286,135 @@ app.get('/api/fs/ls', (req, res) => {
         path: path.join(dir, f.name),
         isDir: f.isDirectory()
       }))
-      .slice(0, 20); // Limit to 20 suggestions
+      .slice(0, 50); // Increased limit
     res.json(suggestions);
   } catch (e) {
     res.json([]);
+  }
+});
+
+// Read file content
+app.get('/api/fs/read', (req, res) => {
+  const filePath = req.query.path as string;
+  if (!filePath) return res.status(400).json({ error: 'Path is required' });
+  
+  const normalizedPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+  
+  try {
+    if (!fs.existsSync(normalizedPath)) return res.status(404).json({ error: 'File not found' });
+    const stats = fs.statSync(normalizedPath);
+    if (stats.isDirectory()) return res.status(400).json({ error: 'Cannot read a directory' });
+    
+    // Limit file size to 1MB for safety
+    if (stats.size > 1024 * 1024) return res.status(400).json({ error: 'File too large (max 1MB)' });
+    
+    const content = fs.readFileSync(normalizedPath, 'utf-8');
+    res.json({ content });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to read file' });
+  }
+});
+
+// Write file content
+app.post('/api/fs/write', (req, res) => {
+  const { path: filePath, content } = req.body;
+  if (!filePath) return res.status(400).json({ error: 'Path is required' });
+  
+  const normalizedPath = path.isAbsolute(filePath) ? filePath : path.join(process.cwd(), filePath);
+  
+  try {
+    // Ensure directory exists
+    const dir = path.dirname(normalizedPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    fs.writeFileSync(normalizedPath, content, 'utf-8');
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to write file' });
+  }
+});
+
+// Enhanced file listing with stats
+app.get('/api/fs/list', (req, res) => {
+  const queryPath = (req.query.path as string) || '/';
+  const normalizedPath = path.isAbsolute(queryPath) ? queryPath : path.join(process.cwd(), queryPath);
+
+  try {
+    if (!fs.existsSync(normalizedPath)) return res.status(404).json({ error: 'Directory not found' });
+    const stats = fs.statSync(normalizedPath);
+    if (!stats.isDirectory()) return res.status(400).json({ error: 'Not a directory' });
+
+    const files = fs.readdirSync(normalizedPath, { withFileTypes: true });
+    const result = files.map(f => {
+      const fullPath = path.join(normalizedPath, f.name);
+      try {
+        const s = fs.statSync(fullPath);
+        return {
+          name: f.name,
+          path: fullPath,
+          isDir: f.isDirectory(),
+          size: s.size,
+          mtime: s.mtime,
+          ext: path.extname(f.name).toLowerCase()
+        };
+      } catch (e) {
+        return {
+          name: f.name,
+          path: fullPath,
+          isDir: f.isDirectory(),
+          size: 0,
+          mtime: new Date(0),
+          ext: path.extname(f.name).toLowerCase()
+        };
+      }
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to list directory' });
+  }
+});
+
+// Create hard link
+app.post('/api/fs/link', (req, res) => {
+  const { source, target } = req.body;
+  if (!source || !target) return res.status(400).json({ error: 'Source and target are required' });
+
+  try {
+    // Ensure target directory exists
+    const targetDir = path.dirname(target);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    if (fs.existsSync(target)) {
+      return res.status(400).json({ error: 'Target already exists' });
+    }
+
+    fs.linkSync(source, target);
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || 'Failed to create hard link' });
+  }
+});
+
+// Delete file
+app.delete('/api/fs/delete', (req, res) => {
+  const filePath = req.query.path as string;
+  if (!filePath) return res.status(400).json({ error: 'Path is required' });
+
+  try {
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    const stats = fs.statSync(filePath);
+    if (stats.isDirectory()) {
+      fs.rmSync(filePath, { recursive: true, force: true });
+    } else {
+      fs.unlinkSync(filePath);
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to delete file' });
   }
 });
 

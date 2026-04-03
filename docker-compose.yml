@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  taskscheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: task-scheduler
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+    volumes:
+      - ./tasks.json:/app/tasks.json
+      - ./logs.json:/app/logs.json
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/tasks"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

@@ -1,0 +1,5 @@
+{
+  "name": "Linux Task Scheduler",
+  "description": "A web-based UI for managing cron tasks (Node.js, Python, Shell) with real-time logs.",
+  "requestFramePermissions": []
+}

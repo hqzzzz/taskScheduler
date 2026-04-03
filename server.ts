@@ -6,7 +6,7 @@ import cron from 'node-cron';
 import { v4 as uuidv4 } from 'uuid';
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const TASKS_FILE = path.join(process.cwd(), 'tasks.json');
 const LOGS_FILE = path.join(process.cwd(), 'logs.json');
 

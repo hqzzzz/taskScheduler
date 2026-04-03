@@ -6,7 +6,6 @@
     "mode": "code",
     "command": "console.log('Task executed at: ' + new Date().toISOString());",
     "cron": "*/5 * * * *",
-    "status": "active",
-    "lastRun": "2026-04-03T15:17:44.335Z"
+    "status": "active"
   }
 ]

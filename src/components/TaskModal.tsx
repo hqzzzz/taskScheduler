@@ -1,19 +1,24 @@
 import React from 'react';
 import { X, Terminal, Clock, AlertCircle } from 'lucide-react';
 import { Task } from '../types';
+import { PathInput } from './PathInput';
 
 interface TaskModalProps {
   editingTask: Partial<Task> | null;
   setEditingTask: (task: any) => void;
   setIsModalOpen: (open: boolean) => void;
   handleSubmit: (e: React.FormEvent) => void;
+  authToken: string | null;
+  onAuthError: () => void;
 }
 
 export const TaskModal: React.FC<TaskModalProps> = ({
   editingTask,
   setEditingTask,
   setIsModalOpen,
-  handleSubmit
+  handleSubmit,
+  authToken,
+  onAuthError
 }) => {
   if (!editingTask) return null;
 
@@ -86,13 +91,12 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   onChange={(e) => setEditingTask((prev: any) => ({ ...prev, command: e.target.value }))}
                 />
               ) : (
-                <input
-                  required
-                  type="text"
-                  placeholder="/data/scripts/backup.sh"
-                  className="w-full px-5 py-3 rounded-2xl bg-gray-50 border border-gray-100 focus:bg-white focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all font-mono text-sm"
+                <PathInput
                   value={editingTask.command || ''}
-                  onChange={(e) => setEditingTask((prev: any) => ({ ...prev, command: e.target.value }))}
+                  onChange={(val) => setEditingTask((prev: any) => ({ ...prev, command: val }))}
+                  authToken={authToken}
+                  onAuthError={onAuthError}
+                  placeholder="/data/scripts/backup.sh"
                 />
               )}
             </div>

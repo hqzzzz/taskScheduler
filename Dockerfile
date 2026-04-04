@@ -40,8 +40,11 @@ RUN npm install --omit=dev
 # 从构建阶段复制构建产物和后端代码
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.ts ./
-# 确保 tasks.json 存在，如果不存在则创建一个空的
-RUN if [ ! -f tasks.json ]; then echo "[]" > tasks.json; fi
+
+# 创建数据目录并初始化必要的文件
+RUN mkdir -p /data && \
+    if [ ! -f /data/tasks.json ]; then echo "[]" > /data/tasks.json; fi && \
+    if [ ! -f /data/logs.json ]; then echo "[]" > /data/logs.json; fi
 
 # 设置环境变量
 ENV NODE_ENV=production
@@ -50,10 +53,7 @@ ENV APP_USERNAME=admin
 ENV APP_PASSWORD=admin
 ENV DATA_DIR=/data
 
-# 创建数据目录
-RUN mkdir -p /data
-
-# 暴露端口 (虽然 EXPOSE 是文档性质，但保持一致)
+# 暴露端口
 EXPOSE 3000
 
 # 启动命令

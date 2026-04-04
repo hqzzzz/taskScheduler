@@ -8,8 +8,8 @@ import {
   Plus, 
   File 
 } from 'lucide-react';
-import { FileInfo } from '../types';
 import { cn } from '../lib/utils';
+import { PathInput } from './PathInput';
 
 interface EditorProps {
   editorPath: string;
@@ -20,10 +20,8 @@ interface EditorProps {
   editorMessage: { type: 'success' | 'error', text: string } | null;
   handleSaveFile: () => void;
   handleReadFile: (path: string) => void;
-  fetchPathSuggestions: (path: string) => void;
-  showSuggestions: boolean;
-  setShowSuggestions: (show: boolean) => void;
-  pathSuggestions: { name: string, path: string, isDir: boolean }[];
+  authToken: string | null;
+  onAuthError: () => void;
 }
 
 export const Editor: React.FC<EditorProps> = ({
@@ -35,10 +33,8 @@ export const Editor: React.FC<EditorProps> = ({
   editorMessage,
   handleSaveFile,
   handleReadFile,
-  fetchPathSuggestions,
-  showSuggestions,
-  setShowSuggestions,
-  pathSuggestions
+  authToken,
+  onAuthError
 }) => {
   return (
     <div className="space-y-6 h-full flex flex-col animate-in fade-in duration-500">
@@ -70,47 +66,16 @@ export const Editor: React.FC<EditorProps> = ({
 
       <div className="bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col flex-1 overflow-hidden min-h-[500px]">
         <div className="p-4 border-b border-gray-100 bg-gray-50/50 flex items-center gap-4">
-          <div className="flex-1 relative">
-            <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-              <FolderOpen className="w-4 h-4 text-gray-400" />
-            </div>
-            <input
-              type="text"
-              placeholder="/path/to/file.js"
-              className="w-full pl-11 pr-4 py-2.5 rounded-xl border border-gray-200 font-mono text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 outline-none transition-all"
-              value={editorPath}
-              onChange={(e) => {
-                setEditorPath(e.target.value);
-                fetchPathSuggestions(e.target.value);
-              }}
-              onFocus={() => editorPath && fetchPathSuggestions(editorPath)}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-            />
-            {showSuggestions && pathSuggestions.length > 0 && (
-              <div className="absolute z-50 left-0 right-0 mt-2 bg-white border border-gray-200 rounded-2xl shadow-2xl max-h-60 overflow-y-auto py-2">
-                {pathSuggestions.map((s, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    className="w-full text-left px-4 py-2 hover:bg-emerald-50 flex items-center gap-3 transition-colors"
-                    onClick={() => {
-                      const newPath = s.isDir ? (s.path.endsWith('/') ? s.path : s.path + '/') : s.path;
-                      setEditorPath(newPath);
-                      if (s.isDir) {
-                        fetchPathSuggestions(newPath);
-                      } else {
-                        handleReadFile(newPath);
-                        setShowSuggestions(false);
-                      }
-                    }}
-                  >
-                    {s.isDir ? <Plus className="w-3.5 h-3.5 text-emerald-500" /> : <File className="w-3.5 h-3.5 text-gray-400" />}
-                    <span className="text-xs font-mono text-gray-700">{s.path}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <PathInput
+            value={editorPath}
+            onChange={setEditorPath}
+            onFileSelect={handleReadFile}
+            authToken={authToken}
+            onAuthError={onAuthError}
+            placeholder="/path/to/file.js"
+            icon={<FolderOpen className="w-4 h-4 text-gray-400" />}
+            className="flex-1"
+          />
           <button
             onClick={() => handleReadFile(editorPath)}
             disabled={isEditorLoading || !editorPath}

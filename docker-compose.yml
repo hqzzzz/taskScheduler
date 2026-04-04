@@ -12,8 +12,7 @@ services:
       - PORT=3000
       - NODE_ENV=production
     volumes:
-      - ./tasks.json:/app/tasks.json
-      - ./logs.json:/app/logs.json
+      - ./data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/tasks"]

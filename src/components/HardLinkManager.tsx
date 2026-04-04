@@ -17,12 +17,13 @@ import {
 import { format } from 'date-fns';
 import { FileInfo } from '../types';
 import { cn } from '../lib/utils';
+import { PathInput } from './PathInput';
 
 interface PaneProps {
   title: string;
   path: string;
   onPathChange: (path: string) => void;
-  onFileDrop?: (sourcePath: string) => void;
+  onFilesDrop?: (sourcePaths: string[], filter: string, typeFilter: string) => void;
   allowDelete?: boolean;
   onDelete?: (path: string) => void;
   authToken: string | null;
@@ -33,7 +34,7 @@ const FilePane: React.FC<PaneProps> = ({
   title, 
   path, 
   onPathChange, 
-  onFileDrop, 
+  onFilesDrop, 
   allowDelete, 
   onDelete,
   authToken,
@@ -45,13 +46,14 @@ const FilePane: React.FC<PaneProps> = ({
   const [typeFilter, setTypeFilter] = useState('all');
   const [sortBy, setSortBy] = useState<'name' | 'size' | 'mtime'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
 
   const fetchFiles = useCallback(async () => {
     setLoading(true);
     try {
       const headers: Record<string, string> = {};
       if (authToken) headers['Authorization'] = `Basic ${authToken}`;
-      const res = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}`, { headers });
+      const res = await fetch(`/api/fs/list?path=${encodeURIComponent(path)}&filter=${encodeURIComponent(filter)}`, { headers });
       if (res.status === 401) {
         onAuthError();
         return;
@@ -65,7 +67,7 @@ const FilePane: React.FC<PaneProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [path, authToken, onAuthError]);
+  }, [path, authToken, onAuthError, filter]);
 
   useEffect(() => {
     fetchFiles();
@@ -74,11 +76,13 @@ const FilePane: React.FC<PaneProps> = ({
   const filteredFiles = files
     .filter(f => {
       const matchesName = f.name.toLowerCase().includes(filter.toLowerCase());
-      if (typeFilter === 'all') return matchesName;
-      if (typeFilter === 'video') return matchesName && ['.mp4', '.mkv', '.avi', '.mov'].includes(f.ext);
-      if (typeFilter === 'image') return matchesName && ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(f.ext);
-      if (typeFilter === 'dir') return matchesName && f.isDir;
-      return matchesName;
+      const hasMatches = f.hasMatches;
+      
+      if (typeFilter === 'all') return matchesName || hasMatches;
+      if (typeFilter === 'video') return (matchesName && ['.mp4', '.mkv', '.avi', '.mov'].includes(f.ext)) || hasMatches;
+      if (typeFilter === 'image') return (matchesName && ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(f.ext)) || hasMatches;
+      if (typeFilter === 'dir') return (matchesName && f.isDir) || hasMatches;
+      return matchesName || hasMatches;
     })
     .sort((a, b) => {
       let comparison = 0;
@@ -88,10 +92,49 @@ const FilePane: React.FC<PaneProps> = ({
       return sortOrder === 'asc' ? comparison : -comparison;
     });
 
+  const handleFileClick = (e: React.MouseEvent, file: FileInfo) => {
+    const newSelected = new Set(selectedPaths);
+    if (e.ctrlKey || e.metaKey) {
+      if (newSelected.has(file.path)) {
+        newSelected.delete(file.path);
+      } else {
+        newSelected.add(file.path);
+      }
+    } else if (e.shiftKey && selectedPaths.size > 0) {
+      // Basic shift selection logic
+      const lastSelected = Array.from(selectedPaths).pop()!;
+      const lastIdx = filteredFiles.findIndex(f => f.path === lastSelected);
+      const currentIdx = filteredFiles.findIndex(f => f.path === file.path);
+      if (lastIdx !== -1 && currentIdx !== -1) {
+        const start = Math.min(lastIdx, currentIdx);
+        const end = Math.max(lastIdx, currentIdx);
+        for (let i = start; i <= end; i++) {
+          newSelected.add(filteredFiles[i].path);
+        }
+      }
+    } else {
+      newSelected.clear();
+      newSelected.add(file.path);
+    }
+    setSelectedPaths(newSelected);
+  };
+
   const handleDragStart = (e: React.DragEvent, file: FileInfo) => {
-    if (file.isDir) return;
-    e.dataTransfer.setData('sourcePath', file.path);
-    e.dataTransfer.setData('fileName', file.name);
+    let pathsToDrag = [file.path];
+    if (selectedPaths.has(file.path)) {
+      pathsToDrag = Array.from(selectedPaths);
+    }
+    
+    e.dataTransfer.setData('sourcePaths', JSON.stringify(pathsToDrag));
+    e.dataTransfer.setData('sourceFilter', filter);
+    e.dataTransfer.setData('sourceTypeFilter', typeFilter);
+    // For visual feedback
+    const dragImg = document.createElement('div');
+    dragImg.className = 'bg-emerald-600 text-white px-3 py-1 rounded-full text-xs font-bold shadow-lg';
+    dragImg.innerText = `Linking ${pathsToDrag.length} item(s)`;
+    document.body.appendChild(dragImg);
+    e.dataTransfer.setDragImage(dragImg, 0, 0);
+    setTimeout(() => document.body.removeChild(dragImg), 0);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -100,9 +143,16 @@ const FilePane: React.FC<PaneProps> = ({
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const sourcePath = e.dataTransfer.getData('sourcePath');
-    if (sourcePath && onFileDrop) {
-      onFileDrop(sourcePath);
+    const sourcePathsStr = e.dataTransfer.getData('sourcePaths');
+    const sourceFilter = e.dataTransfer.getData('sourceFilter');
+    const sourceTypeFilter = e.dataTransfer.getData('sourceTypeFilter');
+    if (sourcePathsStr && onFilesDrop) {
+      try {
+        const paths = JSON.parse(sourcePathsStr);
+        onFilesDrop(paths, sourceFilter, sourceTypeFilter);
+      } catch (e) {
+        console.error('Failed to parse dropped paths', e);
+      }
     }
   };
 
@@ -113,6 +163,8 @@ const FilePane: React.FC<PaneProps> = ({
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
+
+  const parentPath = path.split('/').slice(0, -1).join('/') || '/';
 
   return (
     <div 
@@ -133,16 +185,17 @@ const FilePane: React.FC<PaneProps> = ({
         
         <div className="flex items-center gap-2">
           <button 
-            onClick={() => onPathChange(path.split('/').slice(0, -1).join('/') || '/')}
+            onClick={() => onPathChange(parentPath)}
             className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
-          <input 
-            type="text" 
+          <PathInput 
             value={path}
-            onChange={(e) => onPathChange(e.target.value)}
-            className="flex-1 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-sm font-mono outline-none focus:border-emerald-500"
+            onChange={onPathChange}
+            authToken={authToken}
+            onAuthError={onAuthError}
+            className="flex-1"
           />
         </div>
 
@@ -187,12 +240,29 @@ const FilePane: React.FC<PaneProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
+            {path !== '/' && (
+              <tr 
+                className="hover:bg-emerald-50/50 transition-colors cursor-pointer"
+                onDoubleClick={() => onPathChange(parentPath)}
+              >
+                <td className="px-4 py-2" colSpan={allowDelete ? 4 : 3}>
+                  <div className="flex items-center gap-2 text-emerald-600 font-bold">
+                    <FolderOpen className="w-4 h-4" />
+                    <span className="text-sm">... 返回上一级</span>
+                  </div>
+                </td>
+              </tr>
+            )}
             {filteredFiles.map((file, idx) => (
               <tr 
                 key={idx} 
-                draggable={!file.isDir}
+                draggable={true}
                 onDragStart={(e) => handleDragStart(e, file)}
-                className="hover:bg-emerald-50/50 transition-colors group cursor-default"
+                onClick={(e) => handleFileClick(e, file)}
+                className={cn(
+                  "hover:bg-emerald-50/50 transition-colors group cursor-default",
+                  selectedPaths.has(file.path) ? "bg-emerald-50" : ""
+                )}
                 onDoubleClick={() => file.isDir && onPathChange(file.path)}
               >
                 <td className="px-4 py-2">
@@ -247,41 +317,50 @@ export const HardLinkManager: React.FC<{ authToken: string | null, onAuthError: 
     localStorage.setItem('hl_right_path', rightPath);
   }, [rightPath]);
 
-  const handleCreateLink = async (sourcePath: string) => {
-    const fileName = sourcePath.split('/').pop();
-    const targetPath = `${rightPath}/${fileName}`;
-    
+  const handleCreateLinks = async (sourcePaths: string[], filter: string, typeFilter: string) => {
     setIsLinking(true);
     setMessage(null);
+    let successCount = 0;
+    let failCount = 0;
     
-    try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (authToken) headers['Authorization'] = `Basic ${authToken}`;
+    for (const sourcePath of sourcePaths) {
+      const fileName = sourcePath.split('/').pop();
+      const targetPath = `${rightPath}/${fileName}`;
       
-      const res = await fetch('/api/fs/link', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ source: sourcePath, target: targetPath }),
-      });
-      
-      if (res.status === 401) {
-        onAuthError();
-        return;
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (authToken) headers['Authorization'] = `Basic ${authToken}`;
+        
+        const res = await fetch('/api/fs/link', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ source: sourcePath, target: targetPath, filter, typeFilter }),
+        });
+        
+        if (res.status === 401) {
+          onAuthError();
+          return;
+        }
+        
+        const data = await res.json();
+        if (data.error) {
+          failCount++;
+        } else {
+          successCount++;
+        }
+      } catch (e) {
+        failCount++;
       }
-      
-      const data = await res.json();
-      if (data.error) {
-        setMessage({ type: 'error', text: data.error });
-      } else {
-        setMessage({ type: 'success', text: `Linked: ${fileName}` });
-        // Refresh right pane by triggering a re-render or using a ref (simpler: just wait a bit)
-        setTimeout(() => setMessage(null), 3000);
-      }
-    } catch (e) {
-      setMessage({ type: 'error', text: 'Failed to create link' });
-    } finally {
-      setIsLinking(false);
     }
+
+    if (successCount > 0) {
+      setMessage({ type: 'success', text: `Successfully linked ${successCount} item(s)${failCount > 0 ? `, ${failCount} failed` : ''}` });
+    } else if (failCount > 0) {
+      setMessage({ type: 'error', text: `Failed to link ${failCount} item(s)` });
+    }
+    
+    setTimeout(() => setMessage(null), 3000);
+    setIsLinking(false);
   };
 
   const handleDeleteLink = async (path: string) => {
@@ -350,7 +429,7 @@ export const HardLinkManager: React.FC<{ authToken: string | null, onAuthError: 
           title="Target (Links)" 
           path={rightPath} 
           onPathChange={setRightPath}
-          onFileDrop={handleCreateLink}
+          onFilesDrop={handleCreateLinks}
           allowDelete={true}
           onDelete={handleDeleteLink}
           authToken={authToken}

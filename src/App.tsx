@@ -21,8 +21,6 @@ export default function App() {
   const [editingTask, setEditingTask] = useState<Partial<Task> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [pathSuggestions, setPathSuggestions] = useState<{ name: string, path: string, isDir: boolean }[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
 
   // Editor State
   const [editorPath, setEditorPath] = useState('');
@@ -178,28 +176,6 @@ export default function App() {
     }
   };
 
-  const fetchPathSuggestions = useCallback(async (path: string) => {
-    if (!path) {
-      setPathSuggestions([]);
-      setShowSuggestions(false);
-      return;
-    }
-    try {
-      const headers: Record<string, string> = {};
-      if (authToken) headers['Authorization'] = `Basic ${authToken}`;
-      const res = await fetch(`/api/fs/ls?path=${encodeURIComponent(path)}`, { headers });
-      if (res.status === 401) {
-        setIsAuthModalOpen(true);
-        return;
-      }
-      const data = await res.json();
-      setPathSuggestions(data);
-      setShowSuggestions(true);
-    } catch (e) {
-      console.error('Failed to fetch suggestions', e);
-    }
-  }, [authToken]);
-
   const handleReadFile = async (path: string) => {
     if (!path) return;
     setIsEditorLoading(true);
@@ -320,10 +296,8 @@ export default function App() {
               editorMessage={editorMessage}
               handleSaveFile={handleSaveFile}
               handleReadFile={handleReadFile}
-              fetchPathSuggestions={fetchPathSuggestions}
-              showSuggestions={showSuggestions}
-              setShowSuggestions={setShowSuggestions}
-              pathSuggestions={pathSuggestions}
+              authToken={authToken}
+              onAuthError={() => setIsAuthModalOpen(true)}
             />
           )}
 
@@ -342,6 +316,8 @@ export default function App() {
           setEditingTask={setEditingTask}
           setIsModalOpen={setIsModalOpen}
           handleSubmit={handleSubmitTask}
+          authToken={authToken}
+          onAuthError={() => setIsAuthModalOpen(true)}
         />
       )}
     </div>

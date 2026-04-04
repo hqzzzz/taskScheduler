@@ -336,9 +336,26 @@ app.post('/api/fs/write', (req, res) => {
   }
 });
 
-// Enhanced file listing with stats
+// Enhanced file listing with stats and recursive filter matching
+const containsMatch = (dirPath: string, filter: string, depth = 0): boolean => {
+  if (depth > 2) return false; // Limit depth for performance
+  try {
+    const files = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const f of files) {
+      if (f.name.toLowerCase().includes(filter.toLowerCase())) return true;
+      if (f.isDirectory()) {
+        if (containsMatch(path.join(dirPath, f.name), filter, depth + 1)) return true;
+      }
+    }
+  } catch (e) {
+    return false;
+  }
+  return false;
+};
+
 app.get('/api/fs/list', (req, res) => {
   const queryPath = (req.query.path as string) || '/';
+  const filter = (req.query.filter as string) || '';
   const normalizedPath = path.isAbsolute(queryPath) ? queryPath : path.join(process.cwd(), queryPath);
 
   try {
@@ -351,13 +368,15 @@ app.get('/api/fs/list', (req, res) => {
       const fullPath = path.join(normalizedPath, f.name);
       try {
         const s = fs.statSync(fullPath);
+        const isDir = f.isDirectory();
         return {
           name: f.name,
           path: fullPath,
-          isDir: f.isDirectory(),
+          isDir,
           size: s.size,
           mtime: s.mtime,
-          ext: path.extname(f.name).toLowerCase()
+          ext: path.extname(f.name).toLowerCase(),
+          hasMatches: isDir && filter ? containsMatch(fullPath, filter) : false
         };
       } catch (e) {
         return {
@@ -366,7 +385,8 @@ app.get('/api/fs/list', (req, res) => {
           isDir: f.isDirectory(),
           size: 0,
           mtime: new Date(0),
-          ext: path.extname(f.name).toLowerCase()
+          ext: path.extname(f.name).toLowerCase(),
+          hasMatches: false
         };
       }
     });
@@ -376,24 +396,71 @@ app.get('/api/fs/list', (req, res) => {
   }
 });
 
-// Create hard link
+// Helper for recursive hard linking with filtering
+const linkRecursive = (source: string, target: string, filter: string, typeFilter: string) => {
+  try {
+    const stats = fs.statSync(source);
+    if (stats.isDirectory()) {
+      const files = fs.readdirSync(source);
+      let linkedAny = false;
+      for (const file of files) {
+        const childLinked = linkRecursive(path.join(source, file), path.join(target, file), filter, typeFilter);
+        if (childLinked) linkedAny = true;
+      }
+      return linkedAny;
+    } else {
+      // It's a file. Check filter if provided.
+      const nameMatch = !filter || source.toLowerCase().includes(filter.toLowerCase());
+      let typeMatch = true;
+      if (typeFilter && typeFilter !== 'all') {
+        const ext = path.extname(source).toLowerCase();
+        if (typeFilter === 'video') typeMatch = ['.mp4', '.mkv', '.avi', '.mov'].includes(ext);
+        else if (typeFilter === 'image') typeMatch = ['.jpg', '.jpeg', '.png', '.gif', '.webp'].includes(ext);
+        else if (typeFilter === 'dir') typeMatch = false; // Should not happen for files
+      }
+
+      if (nameMatch && typeMatch) {
+        const targetDir = path.dirname(target);
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+        if (!fs.existsSync(target)) {
+          fs.linkSync(source, target);
+        }
+        return true;
+      }
+      return false;
+    }
+  } catch (e) {
+    console.error(`Link error for ${source}:`, e);
+    return false;
+  }
+};
+
+// Create hard link (supports recursive for directories)
 app.post('/api/fs/link', (req, res) => {
-  const { source, target } = req.body;
+  const { source, target, filter, typeFilter } = req.body;
   if (!source || !target) return res.status(400).json({ error: 'Source and target are required' });
 
   try {
-    // Ensure target directory exists
-    const targetDir = path.dirname(target);
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
+    const stats = fs.statSync(source);
+    if (stats.isDirectory()) {
+      const linkedAny = linkRecursive(source, target, filter || '', typeFilter || 'all');
+      res.json({ success: true, linkedAny });
+    } else {
+      // Single file link
+      const targetDir = path.dirname(target);
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
 
-    if (fs.existsSync(target)) {
-      return res.status(400).json({ error: 'Target already exists' });
-    }
+      if (fs.existsSync(target)) {
+        return res.status(400).json({ error: 'Target already exists' });
+      }
 
-    fs.linkSync(source, target);
-    res.json({ success: true });
+      fs.linkSync(source, target);
+      res.json({ success: true });
+    }
   } catch (e: any) {
     res.status(500).json({ error: e.message || 'Failed to create hard link' });
   }

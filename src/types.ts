@@ -27,4 +27,5 @@ export interface FileInfo {
   size: number;
   mtime: string;
   ext: string;
+  hasMatches?: boolean;
 }

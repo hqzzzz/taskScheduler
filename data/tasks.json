@@ -1,0 +1,12 @@
+[
+  {
+    "type": "shell",
+    "mode": "code",
+    "status": "active",
+    "cron": "0 * * * *",
+    "command": "‘’hello",
+    "name": "ss",
+    "id": "ad2e28ae-7988-4f3a-be40-a1f418746f15",
+    "lastRun": "2026-04-08T10:44:10.195Z"
+  }
+]

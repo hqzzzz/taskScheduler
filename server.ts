@@ -264,6 +264,32 @@ app.delete('/api/logs', (req, res) => {
   res.json({ success: true });
 });
 
+// Validate cron expression
+app.post('/api/validate-cron', (req, res) => {
+  const { cron: cronExpr } = req.body;
+  if (!cronExpr) return res.status(400).json({ error: 'Cron expression is required' });
+  
+  try {
+    cron.schedule(cronExpr, () => {});
+    res.json({ valid: true });
+  } catch (e: any) {
+    res.status(400).json({ 
+      valid: false, 
+      error: e.message || 'Invalid cron expression',
+      examples: {
+        'Every minute': '* * * * *',
+        'Every 2 hours': '0 */2 * * *',
+        'Every day at 3 AM': '0 3 * * *',
+        'Every Monday at 9 AM': '0 9 * * 1',
+        'Every 30 minutes': '*/30 * * * *',
+        'Every 6 hours': '0 */6 * * *',
+        'At 10:30 AM daily': '30 10 * * *',
+        'First day of month': '0 0 1 * *',
+      }
+    });
+  }
+});
+
 // File system autocomplete API
 app.get('/api/fs/ls', (req, res) => {
   const queryPath = (req.query.path as string) || '/';

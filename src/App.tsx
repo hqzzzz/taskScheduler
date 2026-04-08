@@ -283,7 +283,7 @@ export default function App() {
           )}
 
           {activeTab === 'logs' && (
-            <Logs logs={logs} fetchLogs={fetchLogs} />
+            <Logs logs={logs} fetchLogs={fetchLogs} authToken={authToken} />
           )}
 
           {activeTab === 'editor' && (

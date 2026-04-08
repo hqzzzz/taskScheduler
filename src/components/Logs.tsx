@@ -14,6 +14,7 @@ import { cn } from '../lib/utils';
 interface LogsProps {
   logs: Log[];
   fetchLogs: () => void;
+  authToken?: string | null;
 }
 
 const StatusBadge = ({ status }: { status: Log['status'] }) => {
@@ -32,7 +33,33 @@ const StatusBadge = ({ status }: { status: Log['status'] }) => {
   );
 };
 
-export const Logs: React.FC<LogsProps> = ({ logs, fetchLogs }) => {
+export const Logs: React.FC<LogsProps> = ({ logs, fetchLogs, authToken }) => {
+  const handleClearLogs = async () => {
+    if (!confirm('Clear all logs?')) return;
+    
+    try {
+      const headers: Record<string, string> = {};
+      if (authToken) headers['Authorization'] = `Basic ${authToken}`;
+      
+      const res = await fetch('/api/logs', { 
+        method: 'DELETE',
+        headers
+      });
+      
+      if (!res.ok) {
+        console.error('Failed to clear logs:', res.statusText);
+        alert('Failed to clear logs');
+        return;
+      }
+      
+      await fetchLogs();
+      alert('Logs cleared successfully');
+    } catch (e) {
+      console.error('Error clearing logs:', e);
+      alert('Error clearing logs');
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex items-center justify-between">
@@ -41,12 +68,7 @@ export const Logs: React.FC<LogsProps> = ({ logs, fetchLogs }) => {
           <p className="text-sm text-gray-500">Track task performance and output logs</p>
         </div>
         <button 
-          onClick={async () => {
-            if (confirm('Clear all logs?')) {
-              await fetch('/api/logs', { method: 'DELETE' });
-              fetchLogs();
-            }
-          }}
+          onClick={handleClearLogs}
           className="text-xs text-rose-500 hover:text-rose-600 font-bold flex items-center gap-2 px-4 py-2 hover:bg-rose-50 rounded-xl transition-all"
         >
           <Trash2 className="w-4 h-4" />

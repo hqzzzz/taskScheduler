@@ -7,7 +7,8 @@ import {
   Settings, 
   LogOut,
   Clock,
-  ChevronRight
+  ChevronRight,
+  RefreshCw
 } from 'lucide-react';
 
 import { cn } from '../lib/utils';
@@ -24,6 +25,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, onLog
     { id: 'logs', label: 'Execution Logs', icon: FileText },
     { id: 'editor', label: 'File Editor', icon: FileCode },
     { id: 'hardlink', label: 'Hard Linker', icon: Link2 },
+    { id: 'transfer', label: 'File Transfer', icon: RefreshCw },
   ];
 
   return (

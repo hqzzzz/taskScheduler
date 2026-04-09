@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
-import { exec } from 'child_process';
+import { exec, spawn, execSync } from 'child_process';
 import cron from 'node-cron';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -82,6 +82,8 @@ app.post('/api/login', (req, res) => {
 app.use('/api/tasks', authMiddleware);
 app.use('/api/logs', authMiddleware);
 app.use('/api/fs', authMiddleware);
+app.use('/api/validate-cron', authMiddleware);
+app.use('/api/transfers', authMiddleware);
 
 // Helper to read/write JSON files
 const readJson = (file: string) => {
@@ -122,6 +124,165 @@ interface Log {
 
 // Scheduler state
 const scheduledTasks = new Map<string, any>();
+
+interface TransferTask {
+  id: string;
+  type: 'copy' | 'move';
+  sources: string[];
+  target: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  speed: string;
+  startTime: string;
+  endTime?: string;
+  error?: string;
+}
+
+const transfers = new Map<string, TransferTask>();
+
+const formatBytes = (bytes: number) => {
+  if (bytes === 0) return '0B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + sizes[i];
+};
+
+const executeNodeTransfer = async (task: TransferTask) => {
+  task.status = 'running';
+  task.startTime = new Date().toISOString();
+  task.speed = 'Calculating...';
+
+  try {
+    // 1. Calculate total size for progress tracking
+    let totalSize = 0;
+    const calculateSize = (p: string) => {
+      try {
+        const stats = fs.statSync(p);
+        if (stats.isDirectory()) {
+          fs.readdirSync(p).forEach(f => calculateSize(path.join(p, f)));
+        } else {
+          totalSize += stats.size;
+        }
+      } catch (e) {}
+    };
+    task.sources.forEach(s => calculateSize(s));
+    if (totalSize === 0) totalSize = 1;
+
+    let transferred = 0;
+    let lastTime = Date.now();
+    let lastTransferred = 0;
+
+    const copyFile = (src: string, dest: string) => {
+      const destDir = path.dirname(dest);
+      if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
+      
+      const readStream = fs.createReadStream(src);
+      const writeStream = fs.createWriteStream(dest);
+      
+      return new Promise<void>((resolve, reject) => {
+        readStream.on('data', (chunk) => {
+          transferred += chunk.length;
+          task.progress = Math.round((transferred / totalSize) * 100);
+          
+          const now = Date.now();
+          if (now - lastTime >= 1000) {
+            const speed = (transferred - lastTransferred) / ((now - lastTime) / 1000);
+            task.speed = formatBytes(speed) + '/s';
+            lastTime = now;
+            lastTransferred = transferred;
+          }
+        });
+        readStream.on('error', reject);
+        writeStream.on('error', reject);
+        writeStream.on('finish', resolve);
+        readStream.pipe(writeStream);
+      });
+    };
+
+    const processItem = async (src: string, dest: string) => {
+      const stats = fs.statSync(src);
+      if (stats.isDirectory()) {
+        if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+        for (const file of fs.readdirSync(src)) {
+          await processItem(path.join(src, file), path.join(dest, file));
+        }
+        if (task.type === 'move') fs.rmSync(src, { recursive: true, force: true });
+      } else {
+        await copyFile(src, dest);
+        if (task.type === 'move') fs.unlinkSync(src);
+      }
+    };
+
+    for (const source of task.sources) {
+      const dest = path.join(task.target, path.basename(source));
+      await processItem(source, dest);
+    }
+
+    task.status = 'completed';
+    task.progress = 100;
+  } catch (e: any) {
+    task.status = 'failed';
+    task.error = e.message;
+  } finally {
+    task.endTime = new Date().toISOString();
+  }
+};
+
+const executeTransfer = (task: TransferTask) => {
+  // Check if rsync is available
+  let hasRsync = false;
+  try {
+    execSync('rsync --version', { stdio: 'ignore' });
+    hasRsync = true;
+  } catch (e) {}
+
+  if (!hasRsync) {
+    executeNodeTransfer(task);
+    return;
+  }
+
+  task.status = 'running';
+  task.startTime = new Date().toISOString();
+  
+  const args = task.type === 'copy' 
+    ? ['-av', '--info=progress2', ...task.sources, task.target]
+    : ['-av', '--info=progress2', '--remove-source-files', ...task.sources, task.target];
+
+  const child = spawn('rsync', args);
+
+  child.stdout.on('data', (data) => {
+    const output = data.toString();
+    // Try to parse progress from rsync output
+    // Example: 1,234,567  89%  1.23MB/s    0:00:01
+    const progressMatch = output.match(/(\d+)%\s+([\d.]+\w+\/s)/);
+    if (progressMatch) {
+      task.progress = parseInt(progressMatch[1]);
+      task.speed = progressMatch[2];
+    }
+  });
+
+  child.stderr.on('data', (data) => {
+    task.error = (task.error || '') + data.toString();
+  });
+
+  child.on('close', (code) => {
+    task.status = code === 0 ? 'completed' : 'failed';
+    task.endTime = new Date().toISOString();
+    if (code === 0) task.progress = 100;
+    
+    // If it was a move, we might need to clean up empty directories if rsync didn't
+    if (task.type === 'move' && code === 0) {
+      task.sources.forEach(source => {
+        try {
+          if (fs.existsSync(source) && fs.statSync(source).isDirectory()) {
+            fs.rmSync(source, { recursive: true, force: true });
+          }
+        } catch (e) {}
+      });
+    }
+  });
+};
 
 const executeTask = async (task: Task) => {
   const logId = uuidv4();
@@ -288,6 +449,37 @@ app.post('/api/validate-cron', (req, res) => {
       }
     });
   }
+});
+
+// Transfer API
+app.post('/api/transfers', (req, res) => {
+  const { type, sources, target } = req.body;
+  if (!type || !sources || !target) return res.status(400).json({ error: 'Missing parameters' });
+
+  const id = uuidv4();
+  const task: TransferTask = {
+    id,
+    type,
+    sources,
+    target,
+    status: 'pending',
+    progress: 0,
+    speed: '0B/s',
+    startTime: new Date().toISOString()
+  };
+
+  transfers.set(id, task);
+  executeTransfer(task);
+  res.json(task);
+});
+
+app.get('/api/transfers', (req, res) => {
+  res.json(Array.from(transfers.values()).reverse());
+});
+
+app.delete('/api/transfers/:id', (req, res) => {
+  transfers.delete(req.params.id);
+  res.json({ success: true });
 });
 
 // File system autocomplete API

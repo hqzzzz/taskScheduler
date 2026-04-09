@@ -20,10 +20,11 @@ FROM node:22-slim
 
 WORKDIR /app
 
-# 安装 Python 和常用系统工具 (df, free, ps 等)
+# 安装 Python 和常用系统工具 (df, free, ps, rsync 等)
 RUN apt-get update && apt-get install -y \
     python3 \
     procps \
+    rsync \
     locales \
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen && locale-gen \
     && rm -rf /var/lib/apt/lists/*

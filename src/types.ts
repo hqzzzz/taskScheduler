@@ -29,3 +29,16 @@ export interface FileInfo {
   ext: string;
   hasMatches?: boolean;
 }
+
+export interface TransferTask {
+  id: string;
+  type: 'copy' | 'move';
+  sources: string[];
+  target: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  speed: string;
+  startTime: string;
+  endTime?: string;
+  error?: string;
+}

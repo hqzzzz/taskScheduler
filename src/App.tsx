@@ -6,13 +6,14 @@ import { Dashboard } from './components/Dashboard';
 import { Logs } from './components/Logs';
 import { Editor } from './components/Editor';
 import { HardLinkManager } from './components/HardLinkManager';
+import { TransferManager } from './components/TransferManager';
 import { AuthModal } from './components/AuthModal';
 import { TaskModal } from './components/TaskModal';
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<Log[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'editor' | 'hardlink'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'logs' | 'editor' | 'hardlink' | 'transfer'>('dashboard');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(localStorage.getItem('task_auth_token'));
@@ -303,6 +304,13 @@ export default function App() {
 
           {activeTab === 'hardlink' && (
             <HardLinkManager 
+              authToken={authToken}
+              onAuthError={() => setIsAuthModalOpen(true)}
+            />
+          )}
+
+          {activeTab === 'transfer' && (
+            <TransferManager 
               authToken={authToken}
               onAuthError={() => setIsAuthModalOpen(true)}
             />
